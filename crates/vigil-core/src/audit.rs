@@ -28,7 +28,7 @@ pub async fn log_decision(
     let snapshot_json = snapshot.to_string();
     let leaves = timeline_hashes(&snapshot);
     let merkle_root = if leaves.is_empty() {
-        compute_merkle_root(&[snapshot_json.clone()])
+        compute_merkle_root(std::slice::from_ref(&snapshot_json))
     } else {
         compute_merkle_root(&leaves)
     };

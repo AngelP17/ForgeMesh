@@ -6,10 +6,130 @@ use axum::{
     http::{HeaderMap, Response, StatusCode},
     response::{Html, Json},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use vigil_core::types::DataNode;
+
+/* ─── RESPONSE DTOs (aligned with frontend contracts) ─── */
+
+#[derive(Serialize)]
+pub struct IncidentResponse {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incident_type: Option<String>,
+    pub severity: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opened_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sla_ack_by: Option<String>,
+}
+
+impl From<vigil_core::models::Incident> for IncidentResponse {
+    fn from(inc: vigil_core::models::Incident) -> Self {
+        Self {
+            id: inc.id,
+            machine_id: inc.machine_id,
+            incident_type: inc.incident_type,
+            severity: inc.severity.unwrap_or_default(),
+            status: inc.status,
+            title: inc.title,
+            description: inc.suspected_cause,
+            recommended_action: inc.recommended_action,
+            opened_at: inc.opened_at,
+            closed_at: inc.closed_at,
+            rank: inc.rank,
+            tenant_id: inc.tenant_id,
+            sla_ack_by: inc.sla_ack_by,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct DashboardSummaryResponse {
+    pub incidents: Vec<IncidentResponse>,
+    pub counts: IncidentCounts,
+    pub health: HealthResponse,
+    pub slack: SlackStatusResponse,
+    pub node_id: String,
+}
+
+#[derive(Serialize)]
+pub struct IncidentCounts {
+    pub total: usize,
+    pub open: usize,
+    pub acknowledged: usize,
+    pub resolved: usize,
+}
+
+#[derive(Serialize)]
+pub struct HealthResponse {
+    pub last_ingest: Option<String>,
+    pub events_last_hour: i64,
+    pub incidents_open: i64,
+    pub invalid_events: i64,
+    pub mesh_nodes: i64,
+    pub data_quality: String,
+}
+
+#[derive(Serialize)]
+pub struct SlackStatusResponse {
+    pub configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub masked_url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ActionRecordResponse {
+    pub id: String,
+    pub action_type: String,
+    pub note: String,
+    pub taken_by: String,
+    pub created_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct IncidentDetailResponse {
+    pub incident: IncidentResponse,
+    pub actions: Vec<ActionRecordResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<Vec<TimelineEventResponse>>,
+    pub maintenance_tickets: Vec<vigil_core::models::MaintenanceTicket>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copilot_history: Option<Vec<CopilotRecordResponse>>,
+}
+
+#[derive(Serialize)]
+pub struct TimelineEventResponse {
+    pub timestamp: String,
+    pub event_type: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct CopilotRecordResponse {
+    pub mode: String,
+    pub response: String,
+    pub requested_by: String,
+    pub created_at: String,
+}
 
 #[derive(Deserialize)]
 pub struct HistoryParams {
@@ -92,15 +212,46 @@ fn token_from_headers(headers: &HeaderMap) -> Option<String> {
         })
 }
 
-fn role_sees_all_tenants(role: &str) -> bool {
-    matches!(
-        role.to_ascii_lowercase().as_str(),
-        "admin" | "supervisor"
+fn validation_error(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "error": "validation_failed",
+            "message": msg
+        })),
     )
 }
 
+fn map_status_error(status: StatusCode) -> (StatusCode, Json<serde_json::Value>) {
+    let msg = match status {
+        StatusCode::UNAUTHORIZED => "Unauthorized - Invalid or missing session token",
+        StatusCode::FORBIDDEN => "Forbidden - Operational role has insufficient permissions",
+        StatusCode::NOT_FOUND => "Not Found - The requested resource was not found",
+        _ => "Internal Server Error - Unexpected operational telemetry error occurred",
+    };
+    (
+        status,
+        Json(json!({
+            "error": match status {
+                StatusCode::UNAUTHORIZED => "unauthorized",
+                StatusCode::FORBIDDEN => "forbidden",
+                StatusCode::NOT_FOUND => "not_found",
+                _ => "internal_error",
+            },
+            "message": msg
+        })),
+    )
+}
+
+fn role_sees_all_tenants(role: &str) -> bool {
+    matches!(role.to_ascii_lowercase().as_str(), "admin" | "supervisor")
+}
+
 /// Slack URL persistence + test (default operator is `supervisor`, so allow that role too).
-async fn require_integration_manager(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
+async fn require_integration_manager(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), StatusCode> {
     let Some(s) = session_if_valid(state, headers).await? else {
         return Err(StatusCode::UNAUTHORIZED);
     };
@@ -176,7 +327,10 @@ async fn check_incident_tenant(
     Ok(())
 }
 
-pub(crate) async fn check_write_auth(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
+pub(crate) async fn check_write_auth(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), StatusCode> {
     if !state.require_auth {
         return Ok(());
     }
@@ -209,11 +363,7 @@ async fn notify_slack_critical(state: &AppState, ids: &[String]) {
         let body = json!({
             "text": format!("Vigil · CRITICAL incident {id} — {title}"),
         });
-        let _ = reqwest::Client::new()
-            .post(url)
-            .json(&body)
-            .send()
-            .await;
+        let _ = reqwest::Client::new().post(url).json(&body).send().await;
     }
 }
 
@@ -294,8 +444,36 @@ pub async fn trigger_simulation(
     headers: HeaderMap,
     Path(sensor_id): Path<String>,
     Query(params): Query<SimParams>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    check_write_auth(&state, &headers).await?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    check_write_auth(&state, &headers)
+        .await
+        .map_err(map_status_error)?;
+
+    // Validation
+    if let Some(count) = params.count {
+        if count == 0 || count > 100 {
+            return Err(validation_error(
+                "Simulation count must be between 1 and 100",
+            ));
+        }
+    }
+    if let Some(value) = params.value {
+        if !value.is_finite() || !(-100.0..=5000.0).contains(&value) {
+            return Err(validation_error(
+                "Simulation value must be a finite number between -100.0 and 5000.0",
+            ));
+        }
+    }
+    if let Some(ref sensor_type) = params.sensor_type {
+        let valid_types = ["temperature", "pressure", "vibration"];
+        if !valid_types.contains(&sensor_type.trim().to_lowercase().as_str()) {
+            return Err(validation_error(&format!(
+                "Invalid sensor type '{}'. Must be one of {:?}",
+                sensor_type, valid_types
+            )));
+        }
+    }
+
     use vigil_core::simulation::IndustrialSimulator;
 
     let base = params.value.unwrap_or(25.0);
@@ -453,9 +631,33 @@ pub async fn reorder_incident(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     axum::Json(payload): axum::Json<ReorderPayload>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    check_write_auth(&state, &headers).await?;
-    check_incident_tenant(&state, &headers, &payload.incident_id).await?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    check_write_auth(&state, &headers)
+        .await
+        .map_err(map_status_error)?;
+    check_incident_tenant(&state, &headers, &payload.incident_id)
+        .await
+        .map_err(map_status_error)?;
+
+    // Validation
+    if payload.new_rank < 0 {
+        return Err(validation_error("New rank must be a non-negative integer"));
+    }
+    if payload.changed_by.trim().is_empty() {
+        return Err(validation_error(
+            "Field 'changed_by' is required and cannot be empty",
+        ));
+    }
+    if let Some(ref status) = payload.new_status {
+        let valid_statuses = ["open", "acknowledged", "assigned", "resolved"];
+        if !valid_statuses.contains(&status.trim().to_lowercase().as_str()) {
+            return Err(validation_error(&format!(
+                "Invalid status '{}'. Must be one of {:?}",
+                status, valid_statuses
+            )));
+        }
+    }
+
     vigil_core::incidents::reorder_incident(
         &state.db,
         &payload.incident_id,
@@ -465,7 +667,7 @@ pub async fn reorder_incident(
     .await
     .map_err(|e| {
         tracing::error!("Reorder failed: {:?}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
+        map_status_error(StatusCode::INTERNAL_SERVER_ERROR)
     })?;
 
     let _ = state.tx.send(
@@ -489,16 +691,56 @@ pub async fn get_incident_detail(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<IncidentDetailResponse>, StatusCode> {
     check_incident_tenant(&state, &headers, &id).await?;
     let detail = vigil_core::incidents::get_incident_detail(&state.db, &id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!("Incident detail query failed for {}: {:?}", id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
-    match detail {
-        Some(detail) => Ok(Json(json!(detail))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    let Some(detail) = detail else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    // Map backend OperatorAction fields to frontend-compatible ActionRecord fields
+    let actions: Vec<ActionRecordResponse> = detail
+        .actions
+        .into_iter()
+        .map(|a| ActionRecordResponse {
+            id: a.id,
+            action_type: a.action_type.unwrap_or_default(),
+            note: a.action_note.unwrap_or_default(),
+            taken_by: a.taken_by.unwrap_or_default(),
+            created_at: a.taken_at,
+        })
+        .collect();
+
+    // Derive timeline from actions if not already present
+    let timeline: Option<Vec<TimelineEventResponse>> = if actions.is_empty() {
+        None
+    } else {
+        Some(
+            actions
+                .iter()
+                .map(|a| TimelineEventResponse {
+                    timestamp: a.created_at.clone().unwrap_or_default(),
+                    event_type: a.action_type.clone(),
+                    description: a.note.clone(),
+                    actor: Some(a.taken_by.clone()),
+                })
+                .collect(),
+        )
+    };
+
+    Ok(Json(IncidentDetailResponse {
+        incident: detail.incident.into(),
+        actions,
+        timeline,
+        maintenance_tickets: detail.maintenance_tickets,
+        copilot_history: None,
+    }))
 }
 
 pub async fn get_replay(
@@ -518,31 +760,83 @@ pub async fn take_incident_action(
     headers: HeaderMap,
     Path(id): Path<String>,
     axum::Json(payload): axum::Json<ActionPayload>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    check_write_auth(&state, &headers).await?;
-    check_incident_tenant(&state, &headers, &id).await?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    check_write_auth(&state, &headers)
+        .await
+        .map_err(map_status_error)?;
+    check_incident_tenant(&state, &headers, &id)
+        .await
+        .map_err(map_status_error)?;
+
+    // Validation
+    let action_type = payload.action_type.trim();
+    if action_type.is_empty() {
+        return Err(validation_error("Action type is required"));
+    }
+    let valid_actions = [
+        "acknowledge",
+        "assign",
+        "assign_maintenance",
+        "reroute",
+        "override",
+        "resolve",
+    ];
+    if !valid_actions.contains(&action_type) {
+        return Err(validation_error(&format!(
+            "Invalid action type '{}'. Must be one of {:?}",
+            action_type, valid_actions
+        )));
+    }
+    if payload.taken_by.trim().is_empty() {
+        return Err(validation_error(
+            "Field 'taken_by' is required and cannot be empty",
+        ));
+    }
+    if action_type == "override" && payload.note.trim().is_empty() {
+        return Err(validation_error(
+            "Justification note is strictly required for 'override' action",
+        ));
+    }
+    if payload.note.len() > 1000 {
+        return Err(validation_error(
+            "Action note exceeds max length of 1000 characters",
+        ));
+    }
+
+    // Support flexible UI labels mapping
+    let mut final_action_type = action_type.to_string();
+    if final_action_type == "assign" {
+        final_action_type = "assign_maintenance".to_string();
+    }
+
     vigil_core::actions::take_action(
         &state.db,
         &id,
-        &payload.action_type,
+        &final_action_type,
         &payload.note,
         &payload.taken_by,
     )
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        tracing::error!("Take action failed: {:?}", e);
+        map_status_error(StatusCode::INTERNAL_SERVER_ERROR)
+    })?;
 
     let _ = state.tx.send(
         json!({
             "type": "incident_update",
             "incident_id": id,
-            "action": payload.action_type,
+            "action": final_action_type,
         })
         .to_string(),
     );
 
     let detail = vigil_core::incidents::get_incident_detail(&state.db, &id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!("Get detail failed: {:?}", e);
+            map_status_error(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
 
     Ok(Json(json!({
         "status": "ok",
@@ -578,26 +872,57 @@ pub async fn run_copilot(
     headers: HeaderMap,
     Path(id): Path<String>,
     axum::Json(payload): axum::Json<CopilotPayload>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    check_write_auth(&state, &headers).await?;
-    check_incident_tenant(&state, &headers, &id).await?;
-    let mode = vigil_core::copilot::CopilotMode::parse(payload.mode.trim())
-        .ok_or(StatusCode::BAD_REQUEST)?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    check_write_auth(&state, &headers)
+        .await
+        .map_err(map_status_error)?;
+    check_incident_tenant(&state, &headers, &id)
+        .await
+        .map_err(map_status_error)?;
+
+    // Validation
+    let mode_str = payload.mode.trim().to_lowercase();
+    let mode = vigil_core::copilot::CopilotMode::parse(&mode_str)
+        .ok_or_else(|| {
+            validation_error(&format!(
+                "Invalid copilot mode '{}'. Must be one of ['summary', 'explain', 'handoff', 'ask', 'qa']",
+                mode_str
+            ))
+        })?;
+
+    if mode == vigil_core::copilot::CopilotMode::Ask {
+        if let Some(ref question) = payload.question {
+            if question.trim().is_empty() {
+                return Err(validation_error(
+                    "Question must be non-empty when mode is 'qa' or 'ask'",
+                ));
+            }
+        } else {
+            return Err(validation_error(
+                "Question is required when mode is 'qa' or 'ask'",
+            ));
+        }
+    }
+
     let requested_by = payload
         .requested_by
         .clone()
         .unwrap_or_else(|| "Operator_1".to_string());
+    if requested_by.trim().is_empty() {
+        return Err(validation_error("Field 'requested_by' cannot be empty"));
+    }
+
     let detail = vigil_core::incidents::get_incident_detail(&state.db, &id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| map_status_error(StatusCode::INTERNAL_SERVER_ERROR))?
+        .ok_or_else(|| map_status_error(StatusCode::NOT_FOUND))?;
     let replay = vigil_core::audit::get_replay(&state.db, &id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| map_status_error(StatusCode::INTERNAL_SERVER_ERROR))?;
     let mesh_nodes = state.gossip.mesh_node_count().await;
     let health = vigil_core::db::load_health_snapshot(&state.db, mesh_nodes)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| map_status_error(StatusCode::INTERNAL_SERVER_ERROR))?;
     let telemetry = collect_incident_telemetry(&state, &detail.incident).await;
 
     let request = vigil_core::copilot::CopilotRequest {
@@ -619,7 +944,7 @@ pub async fn run_copilot(
 
     vigil_core::audit::log_copilot_response(&state.db, &id, &request, &response, snapshot)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| map_status_error(StatusCode::INTERNAL_SERVER_ERROR))?;
 
     let _ = state.tx.send(
         json!({
@@ -745,10 +1070,7 @@ pub async fn incident_mailto(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let subject = format!(
-        "Vigil incident {}",
-        inc.title.as_deref().unwrap_or(&inc.id)
-    );
+    let subject = format!("Vigil incident {}", inc.title.as_deref().unwrap_or(&inc.id));
     let body = format!(
         "Incident ID: {}\nSeverity: {:?}\nStatus: {}\n",
         inc.id, inc.severity, inc.status
@@ -864,8 +1186,28 @@ pub async fn put_slack_integration(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     axum::Json(body): axum::Json<SlackPutBody>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    require_integration_manager(&state, &headers).await?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    require_integration_manager(&state, &headers)
+        .await
+        .map_err(map_status_error)?;
+
+    // Validation
+    if let Some(ref url) = body.webhook_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            if !trimmed.starts_with("https://") {
+                return Err(validation_error(
+                    "Slack webhook URL must start with 'https://'",
+                ));
+            }
+            if trimmed.len() < 15 {
+                return Err(validation_error(
+                    "Slack webhook URL is too short to be a valid webhook",
+                ));
+            }
+        }
+    }
+
     let cleaned = body
         .webhook_url
         .map(|s| s.trim().to_string())
@@ -873,12 +1215,12 @@ pub async fn put_slack_integration(
     if let Some(ref u) = cleaned {
         vigil_core::set_app_setting(&state.db, "slack_webhook_url", u)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| map_status_error(StatusCode::INTERNAL_SERVER_ERROR))?;
         *state.slack_webhook.write().await = Some(u.clone());
     } else {
         vigil_core::delete_app_setting(&state.db, "slack_webhook_url")
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| map_status_error(StatusCode::INTERNAL_SERVER_ERROR))?;
         *state.slack_webhook.write().await = None;
     }
     Ok(Json(json!({ "status": "ok" })))
@@ -888,8 +1230,21 @@ pub async fn post_slack_test(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     axum::Json(body): axum::Json<SlackTestBody>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    require_integration_manager(&state, &headers).await?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    require_integration_manager(&state, &headers)
+        .await
+        .map_err(map_status_error)?;
+
+    // Validation
+    if let Some(ref url) = body.webhook_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with("https://") {
+            return Err(validation_error(
+                "Slack webhook URL must start with 'https://'",
+            ));
+        }
+    }
+
     let target = if let Some(ref u) = body.webhook_url {
         let t = u.trim();
         if t.is_empty() {
@@ -901,17 +1256,108 @@ pub async fn post_slack_test(
         state.slack_webhook.read().await.clone()
     };
     let Some(url) = target else {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(validation_error(
+            "No Slack webhook URL configured or provided",
+        ));
     };
     let client = reqwest::Client::new();
     let res = client
         .post(&url)
-        .json(&json!({ "text": "Vigil — Slack integration test ping" }))
+        .json(&json!({ "text": "Vigil · Slack integration test ping" }))
         .send()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|_| map_status_error(StatusCode::BAD_GATEWAY))?;
     if !res.status().is_success() {
-        return Err(StatusCode::BAD_GATEWAY);
+        return Err(map_status_error(StatusCode::BAD_GATEWAY));
     }
-    Ok(Json(json!({ "status": "ok", "message": "test message accepted by webhook" })))
+    Ok(Json(
+        json!({ "status": "ok", "message": "test message accepted by webhook" }),
+    ))
+}
+
+pub async fn get_dashboard_summary(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<DashboardSummaryResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let mut q = IncidentQuery::default();
+    apply_tenant_scope_query(&state, &headers, &mut q)
+        .await
+        .map_err(map_status_error)?;
+    let f = vigil_core::IncidentFilters {
+        tenant_id: q.tenant_id.as_deref(),
+        status: None,
+        severity: None,
+        machine: None,
+        q: None,
+        from_opened: None,
+        to_opened: None,
+    };
+    let incidents = vigil_core::list_incidents_filtered(&state.db, &f)
+        .await
+        .map_err(|e| {
+            tracing::error!("Dashboard summary query failed: {:?}", e);
+            map_status_error(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    let mesh_nodes = state.gossip.mesh_node_count().await;
+    let health = vigil_core::db::load_health_snapshot(&state.db, mesh_nodes)
+        .await
+        .map(|h| HealthResponse {
+            last_ingest: h.last_ingest,
+            events_last_hour: h.events_last_hour,
+            incidents_open: h.incidents_open,
+            invalid_events: h.invalid_events,
+            mesh_nodes: h.mesh_nodes,
+            data_quality: h.data_quality,
+        })
+        .unwrap_or_else(|_| HealthResponse {
+            last_ingest: None,
+            events_last_hour: 0,
+            incidents_open: 0,
+            invalid_events: 0,
+            mesh_nodes,
+            data_quality: "100%".to_string(),
+        });
+
+    let slack_url = state.slack_webhook.read().await.clone();
+    let role_sees_all = if let Ok(Some(s)) = session_if_valid(&state, &headers).await {
+        role_sees_all_tenants(&s.role)
+    } else {
+        false
+    };
+
+    let slack = if role_sees_all {
+        SlackStatusResponse {
+            configured: slack_url.is_some(),
+            masked_url: slack_url.as_ref().map(|u| mask_webhook_url(u)),
+        }
+    } else {
+        SlackStatusResponse {
+            configured: slack_url.is_some(),
+            masked_url: None,
+        }
+    };
+
+    let total_incidents = incidents.len();
+    let open_incidents = incidents.iter().filter(|i| i.status == "open").count();
+    let ack_incidents = incidents
+        .iter()
+        .filter(|i| i.status == "acknowledged")
+        .count();
+    let resolved_incidents = incidents.iter().filter(|i| i.status == "resolved").count();
+
+    let incident_responses: Vec<IncidentResponse> = incidents.into_iter().map(Into::into).collect();
+
+    Ok(Json(DashboardSummaryResponse {
+        incidents: incident_responses,
+        counts: IncidentCounts {
+            total: total_incidents,
+            open: open_incidents,
+            acknowledged: ack_incidents,
+            resolved: resolved_incidents,
+        },
+        health,
+        slack,
+        node_id: state.node_id.clone(),
+    }))
 }

@@ -18,11 +18,11 @@ pub use analytics::{
     run_incident_pipeline, IncidentPipelineSummary, OEEMetrics, SensorStats, TrendDirection,
 };
 pub use audit::{get_replay, log_decision};
-pub use copilot::{CopilotContext, CopilotMode, CopilotProfile, CopilotRequest, CopilotResponse};
 pub use auth::{
     create_operator, ensure_default_operator, login, logout, operator_count, validate_session,
     SessionInfo,
 };
+pub use copilot::{CopilotContext, CopilotMode, CopilotProfile, CopilotRequest, CopilotResponse};
 pub use db::{
     delete_app_setting, get_app_setting, init_sqlite_pool, load_health_snapshot, set_app_setting,
 };

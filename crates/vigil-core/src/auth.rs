@@ -26,9 +26,8 @@ pub async fn ensure_default_operator(pool: &SqlitePool) -> sqlx::Result<()> {
     }
 
     let id = Uuid::new_v4().to_string();
-    let hash = bcrypt::hash(DEFAULT_PASSWORD, bcrypt::DEFAULT_COST).map_err(|e| {
-        sqlx::Error::Configuration(format!("bcrypt: {e}").into())
-    })?;
+    let hash = bcrypt::hash(DEFAULT_PASSWORD, bcrypt::DEFAULT_COST)
+        .map_err(|e| sqlx::Error::Configuration(format!("bcrypt: {e}").into()))?;
 
     sqlx::query(
         "INSERT INTO operators (id, username, password_hash, role, tenant_id) VALUES (?1, ?2, ?3, 'supervisor', 'default')",
@@ -55,9 +54,8 @@ pub async fn create_operator(
     tenant_id: &str,
 ) -> sqlx::Result<String> {
     let id = Uuid::new_v4().to_string();
-    let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| {
-        sqlx::Error::Configuration(format!("bcrypt: {e}").into())
-    })?;
+    let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
+        .map_err(|e| sqlx::Error::Configuration(format!("bcrypt: {e}").into()))?;
     sqlx::query(
         "INSERT INTO operators (id, username, password_hash, role, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5)",
     )

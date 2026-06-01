@@ -93,7 +93,10 @@ impl GossipEngine {
             let stale = peers_map
                 .values()
                 .filter(|p| {
-                    Utc::now().signed_duration_since(p.last_seen_wall).num_seconds() > 120
+                    Utc::now()
+                        .signed_duration_since(p.last_seen_wall)
+                        .num_seconds()
+                        > 120
                 })
                 .count();
             match stale {
@@ -172,28 +175,24 @@ impl GossipEngine {
     }
 
     pub async fn handle_message(&self, msg: GossipMessage) {
-        match msg {
-            GossipMessage::RootAnnouncement {
-                node_id,
-                root_hash,
-                ..
-            } => {
-                if node_id == self.node_id {
-                    return;
-                }
-                let wall = Utc::now();
-                let mut peers = self.peers.write().await;
-                peers.insert(
-                    node_id.clone(),
-                    PeerState {
-                        last_seen: std::time::Instant::now(),
-                        last_seen_wall: wall,
-                        root_hash,
-                    },
-                );
-                info!("Peer {} announced new root", node_id);
+        if let GossipMessage::RootAnnouncement {
+            node_id, root_hash, ..
+        } = msg
+        {
+            if node_id == self.node_id {
+                return;
             }
-            _ => {}
+            let wall = Utc::now();
+            let mut peers = self.peers.write().await;
+            peers.insert(
+                node_id.clone(),
+                PeerState {
+                    last_seen: std::time::Instant::now(),
+                    last_seen_wall: wall,
+                    root_hash,
+                },
+            );
+            info!("Peer {} announced new root", node_id);
         }
     }
 }

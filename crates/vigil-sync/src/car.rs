@@ -58,11 +58,7 @@ impl CarExporter {
         }
         let _ = reader.read_u32::<LittleEndian>()?;
 
-        loop {
-            let hash_len = match reader.read_u16::<LittleEndian>() {
-                Ok(n) => n,
-                Err(_) => break,
-            };
+        while let Ok(hash_len) = reader.read_u16::<LittleEndian>() {
             let mut hash_buf = vec![0u8; hash_len as usize];
             reader.read_exact(&mut hash_buf)?;
             let hash = String::from_utf8_lossy(&hash_buf).to_string();

@@ -140,7 +140,7 @@ async fn main() -> Result<()> {
             let app = vigil_web::create_router(state);
             let addr = format!("0.0.0.0:{}", port);
             info!("Daemon starting on http://{}", addr);
-            println!("Vigil UI: http://{}:{}", "localhost", port);
+            println!("Vigil UI: http://localhost:{port}");
             axum::serve(tokio::net::TcpListener::bind(&addr).await?, app).await?;
         }
         cmd => {

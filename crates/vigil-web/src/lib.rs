@@ -8,12 +8,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use tower_http::services::{ServeDir, ServeFile};
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
+use tower_http::services::{ServeDir, ServeFile};
 
 pub mod api;
 mod incident_pdf;
@@ -58,6 +58,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/integrations/slack/test", post(api::post_slack_test))
         .route("/api/demo/detect", post(api::run_detection))
         .route("/api/detection/run", post(api::run_detection))
+        .route("/api/dashboard/summary", get(api::get_dashboard_summary))
         .route("/api/health", get(api::get_health))
         .route("/api/copilot/status", get(api::get_copilot_status))
         .route("/api/auth/login", post(api::auth_login))
@@ -90,6 +91,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/incidents/:id/actions",
             post(api::take_incident_action),
         )
+        .route("/dashboard/summary", get(api::get_dashboard_summary))
         .route("/copilot/status", get(api::get_copilot_status))
         .route("/incidents/export/csv", get(api::export_incidents_csv))
         .route("/incidents", get(api::list_incidents))
@@ -98,19 +100,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(api::list_incidents_by_status),
         )
         .route("/incidents/reorder", post(api::reorder_incident))
-        .route(
-            "/incidents/:id/export/json",
-            get(api::export_incident_json),
-        )
-        .route(
-            "/incidents/:id/export/pdf",
-            get(api::export_incident_pdf),
-        )
+        .route("/incidents/:id/export/json", get(api::export_incident_json))
+        .route("/incidents/:id/export/pdf", get(api::export_incident_pdf))
         .route("/incidents/:id/report", get(api::incident_report_html))
-        .route(
-            "/incidents/:id/notify/mailto",
-            get(api::incident_mailto),
-        )
+        .route("/incidents/:id/notify/mailto", get(api::incident_mailto))
         .route("/incidents/:id", get(api::get_incident_detail))
         .route("/incidents/:id/copilot", post(api::run_copilot))
         .route("/incidents/:id/replay", get(api::get_replay))
@@ -135,13 +128,12 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 "node_id": state.node_id,
                 "timestamp": chrono::Utc::now().timestamp_millis()
             })
-            .to_string()
-            .into(),
+            .to_string(),
         ))
         .await;
 
     while let Ok(msg) = rx.recv().await {
-        if socket.send(Message::Text(msg.into())).await.is_err() {
+        if socket.send(Message::Text(msg)).await.is_err() {
             break;
         }
     }
@@ -167,11 +159,9 @@ async fn list_sensors(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut seen = HashSet::new();
     let mut sensors = Vec::new();
 
-    for item in store.iter_data() {
-        if let Ok((_, node)) = item {
-            if seen.insert(node.sensor_id.clone()) {
-                sensors.push(node.sensor_id);
-            }
+    for (_, node) in store.iter_data().flatten() {
+        if seen.insert(node.sensor_id.clone()) {
+            sensors.push(node.sensor_id);
         }
     }
 
@@ -254,7 +244,7 @@ async fn write_value(
                     "hash": hash,
                 })),
             )
-            .into_response()
+                .into_response()
         }
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -263,7 +253,7 @@ async fn write_value(
                 "error": error.to_string(),
             })),
         )
-        .into_response(),
+            .into_response(),
     }
 }
 
@@ -273,11 +263,9 @@ async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         let mut total_records = 0;
         let mut sensors = HashSet::new();
 
-        for item in store.iter_data() {
-            if let Ok((_, node)) = item {
-                total_records += 1;
-                sensors.insert(node.sensor_id);
-            }
+        for (_, node) in store.iter_data().flatten() {
+            total_records += 1;
+            sensors.insert(node.sensor_id);
         }
         (total_records, sensors.len())
     };

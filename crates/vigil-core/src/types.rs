@@ -35,11 +35,11 @@ impl DataNode {
     ) -> String {
         let mut hasher = Sha3_256::new();
         hasher.update(sensor_id.as_bytes());
-        hasher.update(&timestamp_ns.to_le_bytes());
-        hasher.update(&value.to_le_bytes());
+        hasher.update(timestamp_ns.to_le_bytes());
+        hasher.update(value.to_le_bytes());
         match parent_hash {
             Some(p) => hasher.update(p.as_bytes()),
-            None => hasher.update(&[0u8]),
+            None => hasher.update([0u8]),
         }
         format!("{:x}", hasher.finalize())
     }

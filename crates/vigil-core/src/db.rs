@@ -81,11 +81,9 @@ async fn column_exists(pool: &SqlitePool, table: &str, col: &str) -> sqlx::Resul
 
 async fn ensure_incident_extensions(pool: &SqlitePool) -> sqlx::Result<()> {
     if !column_exists(pool, "incidents", "tenant_id").await? {
-        sqlx::query(
-            "ALTER TABLE incidents ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'",
-        )
-        .execute(pool)
-        .await?;
+        sqlx::query("ALTER TABLE incidents ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+            .execute(pool)
+            .await?;
     }
     if !column_exists(pool, "incidents", "sla_ack_by").await? {
         sqlx::query("ALTER TABLE incidents ADD COLUMN sla_ack_by TEXT")
@@ -159,7 +157,10 @@ pub async fn delete_app_setting(pool: &SqlitePool, key: &str) -> sqlx::Result<()
 }
 
 /// `mesh_nodes` should reflect live mesh size (e.g. 1 + gossip peer count from the daemon).
-pub async fn load_health_snapshot(pool: &SqlitePool, mesh_nodes: i64) -> sqlx::Result<HealthSnapshot> {
+pub async fn load_health_snapshot(
+    pool: &SqlitePool,
+    mesh_nodes: i64,
+) -> sqlx::Result<HealthSnapshot> {
     let last_ingest: Option<String> = sqlx::query_scalar("SELECT MAX(ingested_at) FROM raw_events")
         .fetch_one(pool)
         .await?;

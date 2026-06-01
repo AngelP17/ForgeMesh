@@ -98,21 +98,26 @@ export async function getStatus() {
 
 export interface Incident {
   id: string;
-  title: string;
+  title?: string;
   description?: string;
-  suspected_cause?: string;
   recommended_action?: string;
-  severity: 'critical' | 'high' | 'medium' | 'low';
-  status: 'open' | 'acknowledged' | 'assigned' | 'resolved';
+  severity: string;
+  status: string;
   machine_id?: string;
   incident_type?: string;
-  created_at?: string;
   opened_at?: string;
-  updated_at?: string;
   closed_at?: string | null;
   tenant_id?: string;
   sla_ack_by?: string;
   rank?: number;
+}
+
+export interface MaintenanceTicket {
+  ticket_type?: string;
+  machine_id?: string;
+  description?: string;
+  status?: string;
+  opened_at?: string;
 }
 
 export interface IncidentDetail {
@@ -120,8 +125,9 @@ export interface IncidentDetail {
   actions: ActionRecord[];
   timeline?: TimelineEvent[];
   copilot_history?: CopilotRecord[];
-  maintenance_tickets?: any[];
+  maintenance_tickets?: MaintenanceTicket[];
 }
+
 
 export interface ActionRecord {
   id: string;
@@ -129,7 +135,6 @@ export interface ActionRecord {
   note: string;
   taken_by: string;
   created_at?: string;
-  timestamp?: string;
 }
 
 export interface TimelineEvent {
@@ -155,8 +160,7 @@ const MOCK_INCIDENTS: Incident[] = [
     status: 'open',
     machine_id: 'ontario-line1',
     incident_type: 'temp_spike',
-    created_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-    updated_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
+    opened_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
     tenant_id: 'default',
   },
   {
@@ -167,8 +171,7 @@ const MOCK_INCIDENTS: Incident[] = [
     status: 'acknowledged',
     machine_id: 'detroit-press',
     incident_type: 'vibration_anomaly',
-    created_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    updated_at: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
+    opened_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
     tenant_id: 'default',
   },
   {
@@ -179,8 +182,7 @@ const MOCK_INCIDENTS: Incident[] = [
     status: 'assigned',
     machine_id: 'ontario-line1,ontario-line2',
     incident_type: 'multi_machine_cascade',
-    created_at: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
-    updated_at: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+    opened_at: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
     tenant_id: 'default',
   },
   {
@@ -191,8 +193,7 @@ const MOCK_INCIDENTS: Incident[] = [
     status: 'open',
     machine_id: 'georgia-line2',
     incident_type: 'pressure_drop',
-    created_at: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
-    updated_at: new Date(Date.now() - 1000 * 60 * 170).toISOString(),
+    opened_at: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
     tenant_id: 'default',
   },
 ];
@@ -212,22 +213,7 @@ export async function getIncident(id: string): Promise<IncidentDetail> {
   try {
     const res = await apiFetch(`/api/incidents/${id}`);
     if (!res.ok) throw new Error();
-    const data = await res.json();
-    // Normalize backend fields to frontend format
-    if (data.incident) {
-      data.incident.description = data.incident.suspected_cause || data.incident.description;
-      data.incident.created_at = data.incident.opened_at || data.incident.created_at;
-      data.incident.updated_at = data.incident.closed_at || data.incident.opened_at || data.incident.updated_at;
-    }
-    if (!data.timeline && data.actions) {
-      data.timeline = data.actions.map((a: any) => ({
-        timestamp: a.timestamp || a.created_at || new Date().toISOString(),
-        event_type: a.action_type || 'action',
-        description: a.note || `${a.action_type} by ${a.taken_by}`,
-        actor: a.taken_by,
-      }));
-    }
-    return data;
+    return await res.json();
   } catch {
     const inc = MOCK_INCIDENTS.find(i => i.id === id) || MOCK_INCIDENTS[0];
     return {
@@ -237,7 +223,7 @@ export async function getIncident(id: string): Promise<IncidentDetail> {
         { id: 'act-2', action_type: 'assign', note: 'Assigned to maintenance team B', taken_by: 'supervisor_jones', created_at: new Date(Date.now() - 1000 * 60 * 25).toISOString() },
       ],
       timeline: [
-        { timestamp: inc.created_at || inc.opened_at || '', event_type: 'detection', description: `Rule ${inc.incident_type} fired`, actor: 'vigil-engine' },
+        { timestamp: inc.opened_at || '', event_type: 'detection', description: `Rule ${inc.incident_type} fired`, actor: 'vigil-engine' },
         { timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(), event_type: 'action', description: 'Incident acknowledged', actor: 'operator_1' },
         { timestamp: new Date(Date.now() - 1000 * 60 * 25).toISOString(), event_type: 'action', description: 'Assigned to maintenance team B', actor: 'supervisor_jones' },
       ],
@@ -430,8 +416,8 @@ export async function exportCsv(filters?: Record<string, string>) {
     const blob = await res.blob();
     downloadBlob(blob, 'vigil-incidents.csv');
   } catch {
-    const csv = 'id,title,severity,status,machine_id,created_at\n' +
-      MOCK_INCIDENTS.map(i => `${i.id},${i.title},${i.severity},${i.status},${i.machine_id || ''},${i.created_at}`).join('\n');
+    const csv = 'id,title,severity,status,machine_id,opened_at\n' +
+      MOCK_INCIDENTS.map(i => `${i.id},${i.title},${i.severity},${i.status},${i.machine_id || ''},${i.opened_at}`).join('\n');
     downloadBlob(new Blob([csv], { type: 'text/csv' }), 'vigil-incidents.csv');
   }
 }
@@ -513,9 +499,67 @@ export async function getLineOee(lineId: string) {
     if (!res.ok) throw new Error();
     return await res.json();
   } catch {
+    // Offline fallback data
     return {
       line: lineId,
       metrics: { availability: 94.2, performance: 87.5, quality: 99.1, oee: 81.8 },
     };
   }
 }
+
+/* ─── DASHBOARD SUMMARY AGGREGATE ─── */
+
+export interface DashboardSummary {
+  incidents: Incident[];
+  counts: {
+    total: number;
+    open: number;
+    acknowledged: number;
+    resolved: number;
+  };
+  health: {
+    last_ingest: string | null;
+    events_last_hour: number;
+    incidents_open: number;
+    invalid_events: number;
+    mesh_nodes: number;
+    data_quality: string;
+  };
+  slack: {
+    configured: boolean;
+    masked_url?: string;
+  };
+  node_id: string;
+}
+
+export async function getDashboardSummary(): Promise<DashboardSummary> {
+  try {
+    const res = await apiFetch('/api/dashboard/summary');
+    if (!res.ok) throw new Error();
+    return await res.json();
+  } catch {
+    // Offline fallback data
+    return {
+      incidents: MOCK_INCIDENTS,
+      counts: {
+        total: MOCK_INCIDENTS.length,
+        open: MOCK_INCIDENTS.filter(i => i.status === 'open').length,
+        acknowledged: MOCK_INCIDENTS.filter(i => i.status === 'acknowledged').length,
+        resolved: MOCK_INCIDENTS.filter(i => i.status === 'resolved').length,
+      },
+      health: {
+        last_ingest: new Date().toISOString(),
+        events_last_hour: 1247,
+        incidents_open: MOCK_INCIDENTS.filter(i => i.status === 'open').length,
+        invalid_events: 12,
+        mesh_nodes: 4,
+        data_quality: '97%',
+      },
+      slack: {
+        configured: false,
+      },
+      node_id: 'vigil-node-fallback',
+    };
+  }
+}
+

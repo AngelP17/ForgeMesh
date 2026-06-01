@@ -110,6 +110,10 @@ Open `http://localhost:8080`.
 Useful commands:
 
 ```bash
+# Backend verification
+cargo check --all-features
+cargo test --workspace
+
 # Verify telemetry chain integrity
 cargo run -p vigil-cli -- verify -s ontario-line1-temp
 
@@ -123,6 +127,7 @@ cargo run -p vigil-cli -- verify -s ontario-line1-temp
 ## API
 
 ```text
+GET  /api/dashboard/summary
 GET  /api/incidents
 GET  /api/incidents?severity=&status=&machine=&q=&from=&to=&tenant_id=
 GET  /api/incidents/export/csv
@@ -209,6 +214,7 @@ The React frontend lives in `apps/web/`:
 cd apps/web
 npm install
 npm run dev      # Vite dev server
+npm run lint     # ESLint
 npm run build    # Production build → dist/
 ```
 

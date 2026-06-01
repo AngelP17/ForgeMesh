@@ -5,13 +5,7 @@ use std::io::{BufWriter, Cursor};
 
 fn sanitize_line(s: &str) -> String {
     s.chars()
-        .map(|c| {
-            if c.is_ascii() && c != '\r' {
-                c
-            } else {
-                '?'
-            }
-        })
+        .map(|c| if c.is_ascii() && c != '\r' { c } else { '?' })
         .collect::<String>()
         .replace('\n', " | ")
 }
@@ -35,12 +29,8 @@ pub fn build_incident_pdf(
     verification: &str,
     extra: &str,
 ) -> Result<Vec<u8>, String> {
-    let (doc, page1, layer1) = PdfDocument::new(
-        &format!("incident-{id}"),
-        Mm(210.0),
-        Mm(297.0),
-        "L1",
-    );
+    let (doc, page1, layer1) =
+        PdfDocument::new(format!("incident-{id}"), Mm(210.0), Mm(297.0), "L1");
     let font = doc
         .add_builtin_font(BuiltinFont::Helvetica)
         .map_err(|e| e.to_string())?;

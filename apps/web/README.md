@@ -1,73 +1,89 @@
-# React + TypeScript + Vite
+# Vigil Web App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Vite + React + TypeScript frontend for Vigil. The app provides the marketing landing page and the operations workbench served by the Rust Axum daemon.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Vite
+- React 19
+- TypeScript
+- Tailwind CSS v3
+- React Router
+- Chart.js
+- GSAP
+- Geist fonts
+- `lucide-react` icons
 
-## React Compiler
+Do not swap the styling, routing, animation, or icon stack without an explicit task. The root `AGENTS.md` has the broader product and agent guidance.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Commands
 
-## Expanding the ESLint configuration
+Run from `apps/web/`:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
+npm run build
+npm run lint
+npm run preview
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+`npm run build` runs `tsc -b` and `vite build`, then writes production assets to `dist/`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Local Development
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Use Vite for frontend-only work:
+
+```bash
+npm run dev
 ```
+
+For integrated backend/API work, run the Rust daemon from the repo root:
+
+```bash
+cargo run -p vigil-cli -- daemon --port 8080
+```
+
+Then open `http://localhost:8080`.
+
+The API client in `src/lib/api.ts` uses same-origin requests and contains mock fallbacks when the backend is unreachable. Keep those fallbacks realistic and clearly bounded.
+
+## Source Map
+
+- `src/pages/Landing.tsx` - landing page and marketing surface.
+- `src/pages/Dashboard.tsx` - operations workbench, incident views, health, sensor trends, and mesh topology.
+- `src/lib/api.ts` - frontend API client, types, auth token handling, and fallback data.
+- `src/index.css` - Tailwind layers, Geist imports, and Vigil CSS tokens.
+- `src/assets/` - checked-in frontend assets.
+
+## Build Output
+
+Do not hand-edit:
+
+- `dist/`
+- `node_modules/`
+- TypeScript build info under `node_modules/.tmp/`
+
+When preparing static assets for the Rust server, regenerate from source and copy the built output intentionally.
+
+## UI Quality Bar
+
+For landing page or redesign tasks, use the `design-taste-frontend` skill. In this repo that means:
+
+- Design read: operational devtool for industrial supervisors and technical reviewers.
+- Current direction: dark industrial interface, amber accent, Geist typography, compact operations density.
+- Preserve the serious product language. Avoid generic marketing filler, decorative version labels, fake precision, duplicate CTA intent, and visual effects that do not support comprehension.
+- Use real screenshots, generated images, or actual live component previews for product visuals.
+- Keep motion purposeful, respect reduced motion, and clean up GSAP effects.
+- Test desktop and mobile layouts. Navigation must stay usable and controls must remain readable in light and dark themes.
+
+## Verification
+
+Before handing off frontend changes, run:
+
+```bash
+npm run lint
+npm run build
+```
+
+For visual changes, also run the integrated daemon and capture or inspect the relevant page in a browser.

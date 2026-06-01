@@ -95,9 +95,9 @@ pub async fn create_incident(pool: &SqlitePool, incident: Incident) -> sqlx::Res
         .unwrap_or_else(|| "default".to_string());
     let sla_ack_by = incident.sla_ack_by.clone().or_else(|| {
         incident.opened_at.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| {
-                (dt.with_timezone(&Utc) + Duration::hours(4)).to_rfc3339()
-            })
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| (dt.with_timezone(&Utc) + Duration::hours(4)).to_rfc3339())
         })
     });
 
@@ -137,9 +137,8 @@ pub async fn list_incidents_filtered(
     pool: &SqlitePool,
     f: &IncidentFilters<'_>,
 ) -> sqlx::Result<Vec<Incident>> {
-    let mut b: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-        "SELECT {INCIDENT_ROW} FROM incidents WHERE 1=1 "
-    ));
+    let mut b: QueryBuilder<Sqlite> =
+        QueryBuilder::new(format!("SELECT {INCIDENT_ROW} FROM incidents WHERE 1=1 "));
     if let Some(t) = f.tenant_id {
         b.push("AND COALESCE(tenant_id, 'default') = ");
         b.push_bind(t);

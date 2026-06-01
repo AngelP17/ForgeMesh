@@ -91,6 +91,7 @@ impl IndustrialSimulator {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> f64 {
         let mut rng = rand::thread_rng();
         let noise = rng.gen_range(-self.noise_level..self.noise_level);
